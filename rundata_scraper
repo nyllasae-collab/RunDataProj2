@@ -1,0 +1,133 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Dec  9 12:05:49 2025
+@author: Jarrett
+"""
+import requests
+import json
+import time
+import os
+
+# Configuration
+meet_year = "2025"
+output_file = "all_race_results.json"
+
+# Graduation year filter (grades 9-12 for 2025 season)
+# Seniors: 2026, Juniors: 2027, Sophomores: 2028, Freshmen: 2029
+valid_grad_years = ["2026", "2027", "2028", "2029"]
+
+# List of race URLs - add new ones here each Sunday
+race_urls = [
+    "https://co.milesplit.com/api/v1/meets/701416/performances?isMeetPro=0&resultsId=1239678&fields=id%2CmeetId%2CmeetName%2CteamId%2CvideoId%2CteamName%2CathleteId%2CfirstName%2ClastName%2Cgender%2CgenderName%2CdivisionId%2CdivisionName%2CmeetResultsDivisionId%2CresultsDivisionId%2CageGroupName%2CgradYear%2CeventName%2CeventCode%2CeventDistance%2CeventGenreOrder%2Cround%2CroundName%2Cheat%2Cunits%2Cmark%2Cplace%2CwindReading%2CprofileUrl%2CteamProfileUrl%2CperformanceVideoId%2CteamLogo%2CstatusCode&teamScores=true&m=GET",
+    "https://co.milesplit.com/api/v1/meets/701583/performances?isMeetPro=1&resultsId=1200913&fields=id%2CmeetId%2CmeetName%2CteamId%2CvideoId%2CteamName%2CathleteId%2CfirstName%2ClastName%2Cgender%2CgenderName%2CdivisionId%2CdivisionName%2CmeetResultsDivisionId%2CresultsDivisionId%2CageGroupName%2CgradYear%2CeventName%2CeventCode%2CeventDistance%2CeventGenreOrder%2Cround%2CroundName%2Cheat%2Cunits%2Cmark%2Cplace%2CwindReading%2CprofileUrl%2CteamProfileUrl%2CperformanceVideoId%2CteamLogo%2CstatusCode&teamScores=true&m=GET",
+    "https://co.milesplit.com/api/v1/meets/684038/performances?isMeetPro=0&resultsId=1206355&fields=id%2CmeetId%2CmeetName%2CteamId%2CvideoId%2CteamName%2CathleteId%2CfirstName%2ClastName%2Cgender%2CgenderName%2CdivisionId%2CdivisionName%2CmeetResultsDivisionId%2CresultsDivisionId%2CageGroupName%2CgradYear%2CeventName%2CeventCode%2CeventDistance%2CeventGenreOrder%2Cround%2CroundName%2Cheat%2Cunits%2Cmark%2Cplace%2CwindReading%2CprofileUrl%2CteamProfileUrl%2CperformanceVideoId%2CteamLogo%2CstatusCode&teamScores=true&m=GET", 
+    "https://co.milesplit.com/api/v1/meets/710089/performances?isMeetPro=0&resultsId=1222192&fields=id%2CmeetId%2CmeetName%2CteamId%2CvideoId%2CteamName%2CathleteId%2CfirstName%2ClastName%2Cgender%2CgenderName%2CdivisionId%2CdivisionName%2CmeetResultsDivisionId%2CresultsDivisionId%2CageGroupName%2CgradYear%2CeventName%2CeventCode%2CeventDistance%2CeventGenreOrder%2Cround%2CroundName%2Cheat%2Cunits%2Cmark%2Cplace%2CwindReading%2CprofileUrl%2CteamProfileUrl%2CperformanceVideoId%2CteamLogo%2CstatusCode&teamScores=true&m=GET",
+    "https://co.milesplit.com/api/v1/meets/710089/performances?isMeetPro=1&resultsId=1222193&fields=id%2CmeetId%2CmeetName%2CteamId%2CvideoId%2CteamName%2CathleteId%2CfirstName%2ClastName%2Cgender%2CgenderName%2CdivisionId%2CdivisionName%2CmeetResultsDivisionId%2CresultsDivisionId%2CageGroupName%2CgradYear%2CeventName%2CeventCode%2CeventDistance%2CeventGenreOrder%2Cround%2CroundName%2Cheat%2Cunits%2Cmark%2Cplace%2CwindReading%2CprofileUrl%2CteamProfileUrl%2CperformanceVideoId%2CteamLogo%2CstatusCode&teamScores=true&m=GET",
+    # Add more URLs here
+]
+
+# Load existing results if file exists
+if os.path.exists(output_file):
+    with open(output_file, 'r') as f:
+        all_results = json.load(f)
+    print(f"Loaded {len(all_results)} existing results from {output_file}\n")
+else:
+    all_results = []
+    print(f"Starting fresh - no existing file found\n")
+    
+# Build a set of existing result "signatures" for fast duplicate checking
+# Signature format: "athlete_id|meet_id|event_name"
+existing_signatures = set()
+for result in all_results:
+    signature = f"{result['athlete_id']}|{result['meet_id']}|{result['event_name']}"
+    existing_signatures.add(signature)
+
+print(f"Tracking {len(existing_signatures)} unique result signatures for deduplication\n")
+
+
+# Loop through each race URL
+total_athletes_added = 0
+total_athletes_filtered = 0
+total_duplicates_skipped = 0
+
+for i, url in enumerate(race_urls, 1):
+    print(f"[{i}/{len(race_urls)}] Scraping race...")
+    
+    try:
+        # Fetch the JSON data
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+        
+        # Extract athletes data
+        athletes = data['data']
+        
+        if not athletes:
+            print("  No athletes found, skipping\n")
+            continue
+        
+        # Get meet info from the first athlete
+        meet_name = athletes[0]['meetName']
+        meet_id = athletes[0]['meetId']
+        
+        print(f"  Meet: {meet_name}")
+        
+        # Process each athlete
+        race_added = 0
+        race_filtered = 0
+        race_duplicates = 0
+        
+        for athlete in athletes:
+            # Filter: only grades 9-12
+            if athlete['gradYear'] not in valid_grad_years:
+                race_filtered += 1
+                continue
+            # Check for duplicate
+            signature = f"{athlete['athleteId']}|{athlete['meetId']}|{athlete['eventName']}"
+            if signature in existing_signatures:
+                race_duplicates += 1
+                continue           
+            
+            result = {
+                'name': f"{athlete['firstName']} {athlete['lastName']}",
+                'grad_year': athlete['gradYear'],
+                'school': athlete['teamName'],
+                'time': athlete['mark'],
+                'place': athlete['place'],
+                'meet_name': athlete['meetName'],
+                'meet_year': meet_year,
+                'event_name': athlete['eventName'],
+                'division': athlete['divisionName'],
+                'gender': athlete['genderName'],
+                'meet_id': meet_id,
+                'athlete_id': athlete['athleteId']
+            }
+            all_results.append(result)
+            race_added += 1
+        
+        total_athletes_added += race_added
+        total_athletes_filtered += race_filtered
+        total_duplicates_skipped += race_duplicates
+        
+        print(f"  Added: {race_added} | Filtered: {race_filtered} non-HS | Skipped: {race_duplicates} duplicates")
+        print()
+        
+        # small delay between requests
+        if i < len(race_urls):
+            time.sleep(1)
+    
+    except Exception as e:
+        print(f"  ERROR: {e}\n")
+        continue
+
+# Save everything to JSON file
+with open(output_file, 'w') as f:
+    json.dump(all_results, f, indent=2)
+
+print("=" * 60)
+print(f"Scraping complete!")
+print(f"  Total athletes in database: {len(all_results)}")
+print(f"  Added this run: {total_athletes_added}")
+print(f"  Filtered out (non-HS): {total_athletes_filtered}")
+print(f"  Duplicates skipped: {total_duplicates_skipped}")
+print(f"  Saved to: {output_file}")
